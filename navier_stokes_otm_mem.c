@@ -4,6 +4,7 @@
 #include <omp.h>
 #include "pascalops.h"
 
+// Usando defines para os parâmetros de entrada
 #define NX 512
 #define NY 512
 #define DT 0.001
@@ -16,21 +17,28 @@ int main(int argc, char *argv[]) {
     }
 
     // Leitura dos parâmetros de entrada
-    double NT = atof(argv[1]);
+    double NT = atof(argv[1]); // Número de passos de tempo
 
-    // Alocar memória
-    double **u = malloc(NX * sizeof(double*));
-    double **v = malloc(NX * sizeof(double*));
-    double **un = malloc(NX * sizeof(double*));
-    double **vn = malloc(NX * sizeof(double*));
+    // ALTERAÇÃO: Alocação de memória contígua
+    // Aloca um único bloco para cada array e mapeia os ponteiros
+    double **u = (double**)malloc(NX * sizeof(double*));
+    double **v = (double**)malloc(NX * sizeof(double*));
+    double **un = (double**)malloc(NX * sizeof(double*));
+    double **vn = (double**)malloc(NX * sizeof(double*));
+    
+    double *u_data = (double*)malloc(NX * NY * sizeof(double));
+    double *v_data = (double*)malloc(NX * NY * sizeof(double));
+    double *un_data = (double*)malloc(NX * NY * sizeof(double));
+    double *vn_data = (double*)malloc(NX * NY * sizeof(double));
     
     for (int i = 0; i < NX; i++) {
-        u[i] = malloc(NY * sizeof(double));
-        v[i] = malloc(NY * sizeof(double));
-        un[i] = malloc(NY * sizeof(double));
-        vn[i] = malloc(NY * sizeof(double));
+        u[i] = &u_data[i * NY];
+        v[i] = &v_data[i * NY];
+        un[i] = &un_data[i * NY];
+        vn[i] = &vn_data[i * NY];
     }
-    // Inicialização paralela com collapse
+
+    // Inicialização (paralela com collapse)
     #pragma omp parallel for collapse(2) schedule(guided)
     for (int i = 0; i < NX; i++) {
         for (int j = 0; j < NY; j++) {
@@ -40,23 +48,21 @@ int main(int argc, char *argv[]) {
             
             u[i][j] = 1.0;
             v[i][j] = 0.0;
-            // Aplicar perturbação se dentro do raio
             if (dist_sq < 400.0) {
-                // Suavizar a perturbação com uma função gaussiana
                 double perturbation = exp(-dist_sq / 100.0);
-                // Adicionar perturbação às velocidades
                 u[i][j] += 2.0 * perturbation;
                 v[i][j] += 1.5 * perturbation;
             }
         }
     }
+
     double start = omp_get_wtime();
     
+    // ALTERAÇÃO: Região paralela única para todo o loop de tempo
     #pragma omp parallel
     {
-        // Loop principal
         for (int t = 0; t < NT; t++) {
-            
+            // Evolução (agora apenas com "for", dentro da região paralela)
             #pragma omp for collapse(2) schedule(guided)
             for (int i = 1; i < NX-1; i++) {
                 for (int j = 1; j < NY-1; j++) {
@@ -67,6 +73,7 @@ int main(int argc, char *argv[]) {
                     vn[i][j] = v[i][j] + DT * NU * laplacian_v;
                 }
             }
+            // Condições de contorno (agora apenas com "for")
             #pragma omp for schedule(guided)
             for (int i = 0; i < NX; i++) {
                 un[i][0] = un[i][NY-2];
@@ -82,10 +89,10 @@ int main(int argc, char *argv[]) {
                 vn[NX-1][j] = vn[1][j];
             }
             
-            // Barreira explícita para garantir que todos os cálculos terminaram antes do swap
+            // ALTERAÇÃO: Barreira explícita para garantir que todos os cálculos terminaram antes do swap
             #pragma omp barrier
 
-            // Trocar ponteiros (operação serial, executada por apenas um thread)
+            // ALTERAÇÃO: Trocar ponteiros (operação serial, executada por apenas um thread)
             #pragma omp single
             {
                 double **ut = u, **vt = v;
@@ -98,13 +105,12 @@ int main(int argc, char *argv[]) {
     double end = omp_get_wtime();
     printf("%.6f\n", end - start);
     
-    // Liberar memória
-    for (int i = 0; i < NX; i++) {
-        free(u[i]);
-        free(v[i]);
-        free(un[i]);
-        free(vn[i]);
-    }
+    // Liberar memória (alterado para liberar apenas os blocos principais)
+    free(u_data);
+    free(v_data);
+    free(un_data);
+    free(vn_data);
+    
     free(u);
     free(v);
     free(un);

@@ -2,14 +2,25 @@
 #include <stdlib.h>
 #include <math.h>
 #include <omp.h>
+#include "pascalops.h"
 
 #define NX 512
 #define NY 512
-#define NT 2000
 #define DT 0.001
 #define NU 0.01
 
-int main() {
+
+
+
+int main(int argc, char *argv[]) {
+    // NOVO: Verificação do número de argumentos
+    if (argc != 2) {
+        return 1; // Retorna um código de erro
+    }
+
+    // Leitura dos parâmetros de entrada
+    double NT = atof(argv[1]);
+    
     // Alocar memória
     double **u = malloc(NX * sizeof(double*));
     double **v = malloc(NX * sizeof(double*));
@@ -22,9 +33,8 @@ int main() {
         un[i] = malloc(NY * sizeof(double));
         vn[i] = malloc(NY * sizeof(double));
     }
-    
     // Inicialização paralela com collapse
-    #pragma omp parallel for collapse(2) schedule(guided)
+    #pragma omp parallel for
     for (int i = 0; i < NX; i++) {
         for (int j = 0; j < NY; j++) {
             double dx = i - NX/2;
@@ -33,21 +43,22 @@ int main() {
             
             u[i][j] = 1.0;
             v[i][j] = 0.0;
-            
-            if (dist_sq < 400) {
-                double perturbation = exp(-dist_sq/100.0);
+            // Aplicar perturbação se dentro do raio
+            if (dist_sq < 400.0) {
+                // Suavizar a perturbação com uma função gaussiana
+                double perturbation = exp(-dist_sq / 100.0);
+                // Adicionar perturbação às velocidades
                 u[i][j] += 2.0 * perturbation;
                 v[i][j] += 1.5 * perturbation;
             }
         }
     }
-    
     double start = omp_get_wtime();
     
     // Loop principal
     for (int t = 0; t < NT; t++) {
         // Evolução com collapse e schedule dinâmico
-        #pragma omp parallel for collapse(2) schedule(guided)
+        #pragma omp parallel for
         for (int i = 1; i < NX-1; i++) {
             for (int j = 1; j < NY-1; j++) {
                 double laplacian_u = u[i+1][j] + u[i-1][j] + u[i][j+1] + u[i][j-1] - 4*u[i][j];
@@ -57,17 +68,15 @@ int main() {
                 vn[i][j] = v[i][j] + DT * NU * laplacian_v;
             }
         }
-        
         // Condições de contorno com schedule estático
-        #pragma omp parallel for schedule(guided)
+        #pragma omp parallel for
         for (int i = 0; i < NX; i++) {
             un[i][0] = un[i][NY-2];
             un[i][NY-1] = un[i][1];
             vn[i][0] = vn[i][NY-2];
             vn[i][NY-1] = vn[i][1];
         }
-        
-        #pragma omp parallel for schedule(guided)
+        #pragma omp parallel for
         for (int j = 0; j < NY; j++) {
             un[0][j] = un[NX-2][j];
             un[NX-1][j] = un[1][j];
